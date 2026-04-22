@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments
+.venv/
+
+# User-specific cache and artifacts
+cache.json
+cache.json.tmp
+ml_model.pkl
+deletions.log
+*.log
+
+# Editor
+.vscode/
+.idea/
