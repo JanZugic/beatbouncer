@@ -388,13 +388,43 @@ def score_track(feats: dict) -> Score:
         # Combined timbre score
         timbre_s = _clip(0.45 * perc_s + 0.35 * subbass_s + 0.20 * (1 - mid_penalty))
 
-        au_score = (0.25 * tempo_s + 0.15 * beat_reg + 0.10 * loud_s
-                    + 0.05 * compr_s + 0.45 * timbre_s)
+        # Peak-time energy — catches "passive" chill tracks that otherwise look club-ish.
+        # Combines onset strength (kick/hit intensity), RMS (overall loudness),
+        # and Spotify energy if we have it.
+        onset = au.get('onset_strength', 0)
+        # Normalize: onset ~1 is sparse, ~3 is solid dance, ~5+ is peak-time
+        onset_s = _clip((onset - 1.5) / 3.0)
+        rms_s = _clip((rms - 0.04) / 0.08)
+        sp = feats.get('spotify') or {}
+        sp_energy = sp.get('energy')
+        if sp_energy is not None:
+            energy_s = _clip(0.4 * onset_s + 0.3 * rms_s + 0.3 * sp_energy)
+        else:
+            energy_s = _clip(0.6 * onset_s + 0.4 * rms_s)
+
+        au_score = (0.22 * tempo_s + 0.12 * beat_reg + 0.08 * loud_s
+                    + 0.03 * compr_s + 0.35 * timbre_s + 0.20 * energy_s)
         contribs.append((0.35, au_score, 'audio'))
         reasons.append(
-            f'audio tempo={tempo:.0f} reg={beat_reg:.2f} perc={perc or 0:.2f} '
-            f'sub={sub:.3f} mid={mid:.2f}'
+            f'audio t={tempo:.0f} perc={perc or 0:.2f} sub={sub:.3f} '
+            f'onset={onset:.1f} energy={energy_s:.2f}'
         )
+
+        # Hard passive flag: multiple weak signals stack up. Gated by ML — if the
+        # learned model strongly says 'club' (DnB, house with sparse production),
+        # skip this penalty. It only fires when both audio AND the ML agree
+        # the track isn't energetic.
+        passive_hits = 0
+        if onset < 2.0: passive_hits += 1
+        if rms < 0.055: passive_hits += 1
+        if sp_energy is not None and sp_energy < 0.55: passive_hits += 1
+        if sp.get('danceability') is not None and sp['danceability'] < 0.60: passive_hits += 1
+        if tempo < 95 and onset < 3.0: passive_hits += 1   # slow AND sparse
+        ml_p_check = feats.get('ml_prob')
+        ml_endorses = ml_p_check is not None and ml_p_check > 0.80
+        if passive_hits >= 3 and not ml_endorses:
+            contribs.append((0.20, 0.15, 'passive'))
+            reasons.append(f'passive signals: {passive_hits}')
     elif au.get('audio_err'):
         reasons.append(f"audio_err: {au['audio_err']}")
 
